@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
@@ -41,12 +39,6 @@ func main() {
 	publicWitness, _ := witness.Public()
 
 	// groth16: Prove & Verify
-	var proof groth16.Proof
-	if len(os.Args) > 1 && os.Args[1] == "gpu" {
-		proof, _ = groth16.Prove(ccs, pk, witness, backend.WithIcicleAcceleration())
-	} else {
-		proof, _ = groth16.Prove(ccs, pk, witness)
-	}
-	
+	proof, _ := groth16.Prove(ccs, pk, witness, backend.WithIcicleAcceleration())
 	groth16.Verify(proof, vk, publicWitness)
 }
