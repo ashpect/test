@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
-	"github.com/consensys/gnark/backend"
 )
 
 // CubicCircuit defines a simple circuit
@@ -21,7 +24,9 @@ type CubicCircuit struct {
 // x**3 + x + 5 == y
 func (circuit *CubicCircuit) Define(api frontend.API) error {
 	x3 := api.Mul(circuit.X, circuit.X, circuit.X)
-	api.AssertIsEqual(circuit.Y, api.Add(x3, circuit.X, 5))
+	for i := 0; i < 1000000; i++ {
+		api.AssertIsEqual(circuit.Y, api.Add(x3, circuit.X, 5))
+	}
 	return nil
 }
 
@@ -37,8 +42,28 @@ func main() {
 	assignment := CubicCircuit{X: 3, Y: 35}
 	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 	publicWitness, _ := witness.Public()
-
 	// groth16: Prove & Verify
-	proof, _ := groth16.Prove(ccs, pk, witness, backend.WithIcicleAcceleration())
-	groth16.Verify(proof, vk, publicWitness)
+	icicleTimeStart := time.Now()
+	proof, err := groth16.Prove(ccs, pk, witness, backend.WithIcicleAcceleration())
+	fmt.Println("Icicle proof time:", time.Since(icicleTimeStart))
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if err = groth16.Verify(proof, vk, publicWitness); err != nil {
+		panic("Failed verification")
+	}
+	
+	gnarkTimeStart := time.Now()
+	proofNoIcicle, err := groth16.Prove(ccs, pk, witness)
+	fmt.Println("Gnark CPU proof time:", time.Since(gnarkTimeStart))
+	
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if err = groth16.Verify(proofNoIcicle, vk, publicWitness); err != nil {
+		panic("Failed verification")
+	}
 }
