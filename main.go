@@ -36,7 +36,9 @@ func main() {
 	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 
 	// groth16 zkSNARK: Setup
-	pk, vk, _ := groth16.Setup(ccs)
+	unsfepk, unsafevk, _ := groth16.Setup(ccs)
+	pk := &unsfepk
+	vk := &unsafevk
 
 	// witness definition
 	assignment := CubicCircuit{X: 3, Y: 35}
@@ -44,26 +46,26 @@ func main() {
 	publicWitness, _ := witness.Public()
 	// groth16: Prove & Verify
 	icicleTimeStart := time.Now()
-	proof, err := groth16.Prove(ccs, pk, witness, backend.WithIcicleAcceleration())
+	proof, err := groth16.Prove(ccs, *pk, witness, backend.WithIcicleAcceleration())
 	fmt.Println("Icicle proof time:", time.Since(icicleTimeStart))
 
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	if err = groth16.Verify(proof, vk, publicWitness); err != nil {
+	if err = groth16.Verify(proof, *vk, publicWitness); err != nil {
 		panic("Failed verification")
 	}
 	
 	gnarkTimeStart := time.Now()
-	proofNoIcicle, err := groth16.Prove(ccs, pk, witness)
+	proofNoIcicle, err := groth16.Prove(ccs, *pk, witness)
 	fmt.Println("Gnark CPU proof time:", time.Since(gnarkTimeStart))
 	
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	if err = groth16.Verify(proofNoIcicle, vk, publicWitness); err != nil {
+	if err = groth16.Verify(proofNoIcicle, *vk, publicWitness); err != nil {
 		panic("Failed verification")
 	}
 }
