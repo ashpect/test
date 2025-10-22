@@ -1,71 +1,58 @@
 package main
 
 import (
-	"fmt"
-	"time"
-
-	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend"
-	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/ingonyama-zk/icicle/v3/wrappers/golang/core"
+	"github.com/ingonyama-zk/icicle/v3/wrappers/golang/curves/bn254"
+	"github.com/ingonyama-zk/icicle/v3/wrappers/golang/curves/bn254/msm"
+	"github.com/ingonyama-zk/icicle/v3/wrappers/golang/runtime"
 )
 
-// CubicCircuit defines a simple circuit
-// x**3 + x + 5 == y
-type CubicCircuit struct {
-	// struct tags on a variable is optional
-	// default uses variable name and secret visibility.
-	X frontend.Variable `gnark:"x"`
-	Y frontend.Variable `gnark:",public"`
-}
-
-// Define declares the circuit constraints
-// x**3 + x + 5 == y
-func (circuit *CubicCircuit) Define(api frontend.API) error {
-	x3 := api.Mul(circuit.X, circuit.X, circuit.X)
-	for i := 0; i < 1000000; i++ {
-		api.AssertIsEqual(circuit.Y, api.Add(x3, circuit.X, 5))
-	}
-	return nil
-}
-
 func main() {
-	// compiles our circuit into a R1CS
-	var circuit CubicCircuit
-	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+	// Load backend using env path
+	runtime.LoadBackendFromEnvOrDefault()
+	// Set Cuda device to perform
+	device := runtime.CreateDevice("CUDA", 0)
+	runtime.SetDevice(&device)
 
-	// groth16 zkSNARK: Setup
-	unsfepk, unsafevk, _ := groth16.Setup(ccs)
-	pk := &unsfepk
-	vk := &unsafevk
+	// Obtain the default MSM configuration.
+	cfg := core.GetDefaultMSMConfig()
 
-	// witness definition
-	assignment := CubicCircuit{X: 3, Y: 35}
-	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
-	publicWitness, _ := witness.Public()
-	// groth16: Prove & Verify
-	icicleTimeStart := time.Now()
-	proof, err := groth16.Prove(ccs, *pk, witness, backend.WithIcicleAcceleration())
-	fmt.Println("Icicle proof time:", time.Since(icicleTimeStart))
+	// Define the size of the problem, here 2^18.
+	size := 1 << 18
 
-	if err != nil {
-		fmt.Println(err)
+	// Generate scalars and points for the MSM operation.
+	scalars := bn254.GenerateScalars(size)
+	points := bn254.GenerateAffinePoints(size)
+
+	// Create a CUDA stream for asynchronous operations.
+	stream, _ := runtime.CreateStream()
+	var p bn254.Projective
+
+	// Allocate memory on the device for the result of the MSM operation.
+	var out core.DeviceSlice
+	_, e := out.MallocAsync(p.Size(), 1, stream)
+
+	if e != runtime.Success {
+		panic(e)
 	}
 
-	if err = groth16.Verify(proof, *vk, publicWitness); err != nil {
-		panic("Failed verification")
-	}
-	
-	gnarkTimeStart := time.Now()
-	proofNoIcicle, err := groth16.Prove(ccs, *pk, witness)
-	fmt.Println("Gnark CPU proof time:", time.Since(gnarkTimeStart))
-	
-	if err != nil {
-		fmt.Println(err)
+	// Set the CUDA stream in the MSM configuration.
+	cfg.StreamHandle = stream
+	cfg.IsAsync = true
+
+	// Perform the MSM operation.
+	e = msm.Msm(scalars, points, &cfg, out)
+
+	if e != runtime.Success {
+		panic(e)
 	}
 
-	if err = groth16.Verify(proofNoIcicle, *vk, publicWitness); err != nil {
-		panic("Failed verification")
-	}
+	// Allocate host memory for the results and copy the results from the device.
+	outHost := make(core.HostSlice[bn254.Projective], 1)
+	runtime.SynchronizeStream(stream)
+	runtime.DestroyStream(stream)
+	outHost.CopyFromDevice(&out)
+
+	// Free the device memory allocated for the results.
+	out.Free()
 }
